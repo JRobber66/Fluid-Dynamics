@@ -11,12 +11,14 @@ Takes two images, **A** (the target) and **B** (the source), and:
    Hungarian algorithm (`scipy.optimize.linear_sum_assignment`), using
    squared CIELAB distance as the cost so "closeness" is perceptual. The
    result is the globally optimal permutation, not a heuristic.
-4. **Runs a fluid simulation** in which every pixel of B is a particle carried
-   by a 2D incompressible fluid (stable-fluids solver: semi-Lagrangian
-   advection + FFT pressure projection + decaying curl-noise turbulence) to
-   its assigned position. Arrival is guaranteed in **at most 10 seconds** by a
-   guidance schedule that hard-pins every particle to its exact destination at
-   the deadline.
+4. **Runs a fluid simulation** in which every pixel of B flies **its own
+   mission**: its own departure time, its own arrival deadline, its own curved
+   flight path (per-pixel arc curvature and wobble), on top of a gentle
+   background incompressible fluid (semi-Lagrangian advection + FFT pressure
+   projection + decaying curl noise). Pixels squish and push past each other
+   freely, bounce off the solid frame, and each one is hard-pinned to its
+   exact destination at its own arrival time — every arrival is guaranteed
+   within **at most 10 seconds**.
 
 Outputs an animated **GIF** and a standalone interactive **HTML player**
 (open in any browser, click Replay).
@@ -55,9 +57,9 @@ python -m pixel_flow examples/demo_a.png examples/demo_b.png -o examples/out
 preprocess.py   load, downsize larger → smaller, reduce to working grid
 assignment.py   sRGB→CIELAB, exact Hungarian assignment (a true permutation:
                 every color of B used exactly once, none altered)
-fluid_sim.py    incompressible fluid on a 48² grid; particles inject their
-                travel intent into the flow, ride shared currents, and a
-                terminal blend guarantees exact arrival at t ≤ 10 s
+fluid_sim.py    per-pixel missions (own departure, deadline, arc, wobble) over
+                a background incompressible fluid on a 48² grid; solid frame
+                walls; each pixel pinned to its target at its own arrival time
 outputs.py      PDF report, animated GIF, self-contained HTML player
 cli.py          orchestrates the four steps
 ```

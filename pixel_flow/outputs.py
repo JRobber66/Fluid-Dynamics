@@ -76,15 +76,17 @@ const ctx = document.getElementById('c').getContext('2d');
 const block = Math.max(2, Math.floor(RS / G));
 const sx = DATA.start.map(p => p[0]), sy = DATA.start.map(p => p[1]);
 const tx = DATA.target.map(p => p[0]), ty = DATA.target.map(p => p[1]);
+// per-pixel missions: own departure, own deadline, own arc + wobble
+const T0 = DATA.depart, T1 = DATA.arrive, ARC = DATA.arc;
+const WF = DATA.wfreq, WP = DATA.wphase;
 const px = new Float32Array(N), py = new Float32Array(N);
 const vx = new Float32Array(N), vy = new Float32Array(N);
 // solid frame: pixel centers stay a half-pixel inside so blocks never poke out
 const LO = 0.5 / G, HI = 1 - 0.5 / G, BOUNCE = 0.4;
 
-// per-particle swirl phase so the flow field varies smoothly across space
 const styles = DATA.colors.map(c => `rgb(${c[0]},${c[1]},${c[2]})`);
 function curl(x, y, t) {
-  // analytic divergence-free field: curl of a sum of drifting sine potentials
+  // analytic divergence-free background fluid (ambience only)
   const a = 1.9, b = 2.6, w = 0.00045;
   const p1x = Math.sin(a * 6.28 * y + w * t) * Math.cos(b * 6.28 * x - w * t);
   const p1y = -Math.sin(a * 6.28 * x - w * t * 1.3) * Math.cos(b * 6.28 * y + w * t);
@@ -97,21 +99,30 @@ function reset() { for (let i = 0; i < N; i++) { px[i] = sx[i]; py[i] = sy[i]; v
 let last = 0;
 function tick(ts) {
   if (t0 === null) { t0 = ts; last = ts; }
-  const t = Math.min(ts - t0, DUR), tau = t / DUR;
+  const tms = Math.min(ts - t0, DUR), t = tms / 1000, tau = tms / DUR;
   const dt = Math.min((ts - last) / 1000, 0.05); last = ts;
-  const tRem = Math.max((DUR - t) / 1000, 0.016);
-  const swirl = 0.45 * Math.pow(1 - smooth(tau * 1.35), 2);
-  const beta = 0.25 + 0.75 * smooth((tau - 0.15) / 0.7);
-  const pin = smooth((tau - 0.72) / 0.28);
+  const swirl = 0.45 * Math.pow(1 - smooth(tau * 1.2), 2);
   for (let i = 0; i < N; i++) {
-    let gx = (tx[i] - px[i]) / tRem, gy = (ty[i] - py[i]) / tRem;
-    const s = Math.hypot(gx, gy); if (s > 2.5) { gx *= 2.5 / s; gy *= 2.5 / s; }
-    const [cx, cy] = curl(px[i], py[i], t);
-    const dx = (1 - beta) * cx * swirl * 3 + gx * beta + cx * swirl;
-    const dy = (1 - beta) * cy * swirl * 3 + gy * beta + cy * swirl;
+    if (t >= T1[i]) { px[i] = tx[i]; py[i] = ty[i]; vx[i] = vy[i] = 0; continue; }
+    if (t < T0[i]) continue;   // still waiting at home in image B
+    const frac = (t - T0[i]) / Math.max(T1[i] - T0[i], 1e-6);
+    const tLeft = Math.max(T1[i] - t, 0.016);
+    // guidance toward THIS pixel's deadline
+    let gx = (tx[i] - px[i]) / tLeft, gy = (ty[i] - py[i]) / tLeft;
+    const s = Math.hypot(gx, gy);
+    if (s > 3) { gx *= 3 / s; gy *= 3 / s; }
+    // own curved detour + personal wobble, strongest mid-flight
+    const nx = s > 1e-9 ? -gy / s : 0, ny = s > 1e-9 ? gx / s : 0;
+    const wig = ARC[i] + 0.35 * Math.sin(WF[i] * 6.2832 * frac + WP[i]);
+    const amp = wig * Math.sin(Math.PI * frac) * s * 0.8;
+    const [cx, cy] = curl(px[i], py[i], tms);
+    const dx = gx + nx * amp + cx * swirl * 0.15;
+    const dy = gy + ny * amp + cy * swirl * 0.15;
     vx[i] += (dx - vx[i]) * Math.min(1, 6 * dt);
     vy[i] += (dy - vy[i]) * Math.min(1, 6 * dt);
     px[i] += vx[i] * dt; py[i] += vy[i] * dt;
+    // per-pixel terminal pin: exact landing at this pixel's own arrival time
+    const pin = smooth((frac - 0.8) / 0.2);
     if (pin > 0) { px[i] += (tx[i] - px[i]) * pin; py[i] += (ty[i] - py[i]) * pin; }
     // walls are solid: reflect off the frame, pixels only squish past each other
     if (px[i] < LO) { px[i] = 2 * LO - px[i]; vx[i] *= -BOUNCE; }
@@ -125,7 +136,7 @@ function tick(ts) {
     ctx.fillStyle = styles[i];
     ctx.fillRect(px[i] * RS - block / 2, py[i] * RS - block / 2, block, block);
   }
-  if (t < DUR) requestAnimationFrame(tick);
+  if (tms < DUR) requestAnimationFrame(tick);
 }
 document.getElementById('replay').onclick = reset;
 reset();
@@ -142,6 +153,11 @@ def write_html(path: str | Path, result: SimResult, duration: float, render_size
         "start": [[round(float(x), 4), round(float(y), 4)] for x, y in start],
         "target": [[round(float(x), 4), round(float(y), 4)] for x, y in target],
         "colors": (result.colors * 255).astype(int).tolist(),
+        "depart": np.round(result.depart, 3).tolist(),
+        "arrive": np.round(result.arrive, 3).tolist(),
+        "arc": np.round(result.arc, 3).tolist(),
+        "wfreq": np.round(result.wobble_freq, 3).tolist(),
+        "wphase": np.round(result.wobble_phase, 3).tolist(),
     }
     html = (
         _HTML_TEMPLATE.replace("__DATA__", json.dumps(data, separators=(",", ":")))
