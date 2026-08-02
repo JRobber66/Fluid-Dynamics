@@ -36,6 +36,7 @@ class SimConfig:
     dissipation: float = 0.985    # per-step velocity retention
     relax: float = 6.0            # particle velocity relaxation rate (1/s); higher = less inertia
     substeps: int = 4             # physics substeps per rendered frame (keeps CFL low)
+    bounce: float = 0.4           # velocity kept (and reversed) when a pixel hits the frame wall
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -166,6 +167,10 @@ def simulate(
     dt = cfg.duration / n_steps
     vel = np.zeros_like(pos)
 
+    # solid frame: pixel centers stay a half-pixel inside so blocks never poke out
+    wall_lo = 0.5 / grid
+    wall_hi = 1.0 - wall_lo
+
     result = SimResult(colors=colors, grid=grid, fps=cfg.fps)
     result.positions.append(pos.copy())
 
@@ -197,6 +202,9 @@ def simulate(
             u += cu * swirl * res * dt * 2.0
             v += cv * swirl * res * dt * 2.0
         u, v = _project(u, v)
+        # no-flux walls: the frame is solid, so kill normal flow at the edges
+        u[:, 0] = u[:, -1] = 0.0
+        v[0, :] = v[-1, :] = 0.0
 
         # particle step: ride the fluid early, obey guidance late
         fluid_vel = np.stack(
@@ -212,7 +220,17 @@ def simulate(
         if w > 0:
             pos = (1.0 - w) * pos + w * target
 
-        pos = np.clip(pos, 0.0, 1.0)
+        # solid walls: pixels squish past each other freely, but bounce off the
+        # frame — reflect the position and reverse (damped) the normal velocity
+        for ax in range(2):
+            below = pos[:, ax] < wall_lo
+            above = pos[:, ax] > wall_hi
+            pos[below, ax] = 2.0 * wall_lo - pos[below, ax]
+            pos[above, ax] = 2.0 * wall_hi - pos[above, ax]
+            hit = below | above
+            vel[hit, ax] *= -cfg.bounce
+        np.clip(pos, wall_lo, wall_hi, out=pos)  # safety net for extreme overshoots
+
         if (step + 1) % cfg.substeps == 0:
             result.positions.append(pos.copy())
 

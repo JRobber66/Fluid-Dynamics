@@ -25,6 +25,8 @@ const sx = DATA.start.map(p => p[0]), sy = DATA.start.map(p => p[1]);
 const tx = DATA.target.map(p => p[0]), ty = DATA.target.map(p => p[1]);
 const px = new Float32Array(N), py = new Float32Array(N);
 const vx = new Float32Array(N), vy = new Float32Array(N);
+// solid frame: pixel centers stay a half-pixel inside so blocks never poke out
+const LO = 0.5 / G, HI = 1 - 0.5 / G, BOUNCE = 0.4;
 
 // per-particle swirl phase so the flow field varies smoothly across space
 const styles = DATA.colors.map(c => `rgb(${c[0]},${c[1]},${c[2]})`);
@@ -58,6 +60,12 @@ function tick(ts) {
     vy[i] += (dy - vy[i]) * Math.min(1, 6 * dt);
     px[i] += vx[i] * dt; py[i] += vy[i] * dt;
     if (pin > 0) { px[i] += (tx[i] - px[i]) * pin; py[i] += (ty[i] - py[i]) * pin; }
+    // walls are solid: reflect off the frame, pixels only squish past each other
+    if (px[i] < LO) { px[i] = 2 * LO - px[i]; vx[i] *= -BOUNCE; }
+    else if (px[i] > HI) { px[i] = 2 * HI - px[i]; vx[i] *= -BOUNCE; }
+    if (py[i] < LO) { py[i] = 2 * LO - py[i]; vy[i] *= -BOUNCE; }
+    else if (py[i] > HI) { py[i] = 2 * HI - py[i]; vy[i] *= -BOUNCE; }
+    px[i] = Math.min(HI, Math.max(LO, px[i])); py[i] = Math.min(HI, Math.max(LO, py[i]));
   }
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, RS, RS);
   for (let i = 0; i < N; i++) {
